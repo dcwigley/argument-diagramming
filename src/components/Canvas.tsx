@@ -4,6 +4,7 @@ import Xarrow, { Xwrapper, useXarrow } from 'react-xarrows';
 import { Node } from './Node';
 import { Toolbar } from './Toolbar';
 import { v4 as uuidv4 } from 'uuid';
+import { io, Socket } from 'socket.io-client';
 
 export type NodeType = {
     id: string;
@@ -25,6 +26,7 @@ export type ConnectionType = {
     end: string;
 };
 
+
 const UpdateArrows: React.FC<{ updateRef: React.MutableRefObject<(() => void) | null> }> = ({ updateRef }) => {
     const updateXarrow = useXarrow();
     useEffect(() => {
@@ -35,31 +37,145 @@ const UpdateArrows: React.FC<{ updateRef: React.MutableRefObject<(() => void) | 
 
 export const Canvas: React.FC = () => {
     const updateArrowsRef = useRef<(() => void) | null>(null);
-    const [nodes, setNodes] = useState<NodeType[]>([]);
-    const [arrows, setArrows] = useState<ArrowType[]>([]);
+    const transformComponentRef = useRef<ReactZoomPanPinchRef>(null);
+    const fileInputRef = useRef<HTMLInputElement>(null);
+    const selectionStartRef = useRef<{ x: number, y: number } | null>(null);
+
+    // Initial load helper
+    const getSavedData = () => {
+        try {
+            const saved = localStorage.getItem('diagram_data');
+            if (saved) {
+                return JSON.parse(saved);
+            }
+        } catch (e) {
+            console.error("Failed to load data", e);
+        }
+        return null;
+    };
+
+    const [nodes, setNodes] = useState<NodeType[]>(() => {
+        const data = getSavedData();
+        return data?.nodes || [];
+    });
+    const [arrows, setArrows] = useState<ArrowType[]>(() => {
+        const data = getSavedData();
+        return data?.arrows || [];
+    });
+
+    const [socket, setSocket] = useState<Socket | null>(null);
+    const isRemoteUpdate = useRef(false);
+
+    // Emitter for live drag (Throttling removed for group sync correctness)
+    const emitUpdate = (event: string, data: any) => {
+        socket?.emit(event, data);
+    };
 
     // Legacy connection state (can clean up later if unused)
     const [connections] = useState<ConnectionType[]>([]);
 
-    const [mode, setMode] = useState<'PAN' | 'SELECT' | 'CONNECT'>('PAN');
-    // ... [rest of state same as before]
+    // UI State
+    const [mode] = useState<'PAN' | 'SELECT' | 'CONNECT'>('PAN');
     const [connectionStart, setConnectionStart] = useState<string | null>(null);
     const [panningDisabled, setPanningDisabled] = useState(false);
-
     const [selectedNodeIds, setSelectedNodeIds] = useState<Set<string>>(new Set());
     const [selectionBox, setSelectionBox] = useState<{ x: number, y: number, w: number, h: number } | null>(null);
-    const selectionStartRef = useRef<{ x: number, y: number } | null>(null);
-
-    // Context Menu state
     const [contextMenu, setContextMenu] = useState<{ x: number, y: number, type: 'ARROW' | 'NODE', id: string } | null>(null);
-
-    // Border visibility state
     const [showBorders, setShowBorders] = useState(true);
-
-    // Lock Movement state
     const [isLocked, setIsLocked] = useState(false);
 
-    const transformComponentRef = useRef<ReactZoomPanPinchRef>(null);
+    useEffect(() => {
+        // Connect to server (Ensure port matches server/index.js)
+        const newSocket = io('http://localhost:3001');
+        setSocket(newSocket);
+
+        newSocket.on('connect', () => {
+            console.log('Connected to server');
+        });
+
+        // Smart Hydration (Initial Load)
+        newSocket.on('init_state', (serverData) => {
+            if (serverData.nodes.length > 0 || serverData.arrows.length > 0) {
+                console.log('Received server state, updating local.');
+                isRemoteUpdate.current = true;
+                setNodes(serverData.nodes);
+                setArrows(serverData.arrows);
+            } else {
+                // Server is empty. check local storage.
+                const localData = getSavedData();
+                if (localData && (localData.nodes.length > 0 || localData.arrows.length > 0)) {
+                    console.log('Server empty, treating local data as authority -> hydration.');
+                    newSocket.emit('hydrate_state', localData);
+                }
+            }
+        });
+
+        // --- Granular Listeners ---
+        newSocket.on('node:add', (node) => {
+            isRemoteUpdate.current = true;
+            setNodes(prev => [...prev, node]);
+        });
+
+        newSocket.on('node:update', (updatedNode) => {
+            isRemoteUpdate.current = true;
+            setNodes(prev => prev.map(n => n.id === updatedNode.id ? updatedNode : n));
+        });
+
+        newSocket.on('node:delete', (nodeId) => {
+            isRemoteUpdate.current = true;
+            setNodes(prev => prev.filter(n => n.id !== nodeId));
+        });
+
+        newSocket.on('arrow:add', (arrow) => {
+            isRemoteUpdate.current = true;
+            setArrows(prev => [...prev, arrow]);
+        });
+
+        newSocket.on('arrow:update', (updatedArrow) => {
+            isRemoteUpdate.current = true;
+            setArrows(prev => prev.map(a => a.id === updatedArrow.id ? updatedArrow : a));
+        });
+
+        newSocket.on('arrow:delete', (arrowId) => {
+            isRemoteUpdate.current = true;
+            setArrows(prev => prev.filter(a => a.id !== arrowId));
+        });
+
+        // Settings Sync
+        newSocket.on('toggle:borders', (val) => {
+            isRemoteUpdate.current = true;
+            setShowBorders(val);
+        });
+
+        newSocket.on('toggle:lock', (val) => {
+            isRemoteUpdate.current = true;
+            setIsLocked(val);
+        });
+
+        // Viewport Sync
+        newSocket.on('viewport:update', (v) => {
+            if (!transformComponentRef.current) return;
+            isRemoteUpdate.current = true;
+            transformComponentRef.current.setTransform(v.x, v.y, v.scale, 0);
+        });
+
+        return () => {
+            newSocket.disconnect();
+        };
+    }, []);
+
+    // Reset remote flag after render
+    useEffect(() => {
+        if (isRemoteUpdate.current) {
+            isRemoteUpdate.current = false;
+        }
+    });
+
+    // ... (rest of local storage persistence code - keep it as backup/offline cache)
+
+
+
+
 
     // Helper to get view center
     const getViewCenter = () => {
@@ -86,28 +202,34 @@ export const Canvas: React.FC = () => {
     const addNode = () => {
         const { x, y } = getViewCenter();
         const id = uuidv4();
-        setNodes((prev) => [...prev, { id, x: x - 100, y, width: 200, height: 100, content: '' }]);
+        const newNode = { id, x: x - 100, y, width: 200, height: 100, content: '' };
+        setNodes((prev) => [...prev, newNode]);
+        socket?.emit('node:add', newNode);
     };
 
     const addArrow = () => {
         const { x, y } = getViewCenter();
         const id = uuidv4();
         // Downward pointing arrow
-        setArrows(prev => [...prev, {
+        const newArrow = {
             id,
             start: { x: x, y: y },
             end: { x: x, y: y + 200 }
-        }]);
+        };
+        setArrows(prev => [...prev, newArrow]);
+        socket?.emit('arrow:add', newArrow);
     };
 
     const deleteArrow = (id: string) => {
         setArrows(prev => prev.filter(a => a.id !== id));
         setContextMenu(null);
+        socket?.emit('arrow:delete', id);
     };
 
     const deleteNode = (id: string) => {
         setNodes(prev => prev.filter(n => n.id !== id));
         setContextMenu(null);
+        socket?.emit('node:delete', id);
     };
 
     const handleNodeDragStart = () => {
@@ -116,7 +238,48 @@ export const Canvas: React.FC = () => {
 
     const handleNodeDragStop = (id: string, x: number, y: number) => {
         setPanningDisabled(false);
-        setNodes((prev) => prev.map(n => n.id === id ? { ...n, x, y } : n));
+
+        // Prepare updates
+        const updates: NodeType[] = [];
+
+        setNodes((prev) => prev.map(n => {
+            if (n.id === id) {
+                const updated = { ...n, x, y };
+                updates.push(updated);
+                return updated;
+            }
+            return n;
+        }));
+
+        // Allow group drag updates here if needed (currently handleNodeDragStop is only for single node drop effectively? 
+        // Logic below handles group updates because handleNodeDrag updates state during drag, but we only emit on stop? 
+        // Actually handleNodeDragStop is only called by the specific node being dragged.
+        // If we want to support group drag stop, we might need to iterate selected nodes.
+        // For now, let's just emit for the single node to prove concept, or iterate if we can access the latest state.
+
+        // Better approach: In handleNodeDrag, we update LOCAL state. 
+        // onDragStop, we should emit the FINAL state of all affected nodes.
+        // However, onDragStop only gives us the x,y of the single node.
+
+        // Simpler for now: Emit the specific node update.
+        // updates.forEach(n => socket?.emit('node:update', n));
+
+        // FIX: Update ALL selected nodes
+        setNodes(prev => {
+            const next = prev.map(n => {
+                if (n.id === id) {
+                    return { ...n, x, y };
+                }
+                return n;
+            });
+
+            next.forEach(n => {
+                if (n.id === id || selectedNodeIds.has(n.id)) {
+                    socket?.emit('node:update', n);
+                }
+            });
+            return next;
+        });
 
         // Always clear selection immediately after dropping
         setSelectedNodeIds(new Set());
@@ -133,6 +296,29 @@ export const Canvas: React.FC = () => {
             }
             return n;
         }));
+
+        // Live Sync (Throttled)
+        if (isGroupDrag) {
+            nodes.forEach(n => {
+                if (n.id === id || selectedNodeIds.has(n.id)) {
+                    const updated = { ...n, x: n.x + dx, y: n.y + dy };
+                    emitUpdate('node:update', updated);
+                }
+            });
+            // Also sync arrows moving with group
+            arrows.forEach(a => {
+                if (selectedNodeIds.has(a.id)) {
+                    const updatedArrow = { ...a, start: { x: a.start.x + dx, y: a.start.y + dy }, end: { x: a.end.x + dx, y: a.end.y + dy } };
+                    emitUpdate('arrow:update', updatedArrow);
+                }
+            });
+        } else {
+            const node = nodes.find(n => n.id === id);
+            if (node) {
+                const updated = { ...node, x: node.x + dx, y: node.y + dy };
+                emitUpdate('node:update', updated);
+            }
+        }
 
         if (isGroupDrag) {
             setArrows(prev => prev.map(a =>
@@ -204,22 +390,40 @@ export const Canvas: React.FC = () => {
                         ? { ...a, start: { x: a.start.x + dx, y: a.start.y + dy }, end: { x: a.end.x + dx, y: a.end.y + dy } }
                         : a
                 ));
+
+                // Live Sync (Throttled) for Group Drag via Arrow
+                nodes.forEach(n => {
+                    if (selectedNodeIds.has(n.id)) {
+                        const updated = { ...n, x: n.x + dx, y: n.y + dy };
+                        emitUpdate('node:update', updated);
+                    }
+                });
+                arrows.forEach(a => {
+                    if (selectedNodeIds.has(a.id)) {
+                        const updatedArrow = { ...a, start: { x: a.start.x + dx, y: a.start.y + dy }, end: { x: a.end.x + dx, y: a.end.y + dy } };
+                        emitUpdate('arrow:update', updatedArrow);
+                    }
+                });
+
             } else {
                 setArrows(prev => prev.map(arrow => {
                     if (arrow.id !== draggedArrowHandle.id) return arrow;
 
+                    let updatedArrow = { ...arrow };
                     if (draggedArrowHandle.type === 'start') {
-                        return { ...arrow, start: { x: arrow.start.x + dx, y: arrow.start.y + dy } };
+                        updatedArrow = { ...arrow, start: { x: arrow.start.x + dx, y: arrow.start.y + dy } };
                     } else if (draggedArrowHandle.type === 'end') {
-                        return { ...arrow, end: { x: arrow.end.x + dx, y: arrow.end.y + dy } };
+                        updatedArrow = { ...arrow, end: { x: arrow.end.x + dx, y: arrow.end.y + dy } };
                     } else {
                         // Body drag
-                        return {
+                        updatedArrow = {
                             ...arrow,
                             start: { x: arrow.start.x + dx, y: arrow.start.y + dy },
                             end: { x: arrow.end.x + dx, y: arrow.end.y + dy }
                         };
                     }
+                    emitUpdate('arrow:update', updatedArrow);
+                    return updatedArrow;
                 }));
             }
             return;
@@ -270,6 +474,40 @@ export const Canvas: React.FC = () => {
             setPanningDisabled(false);
             e.currentTarget.releasePointerCapture(e.pointerId);
 
+            // Emit update for the specific arrow being dragged
+            // Use current state reference effectively by filtering from `arrows` state in next render or just finding it?
+            // Since setArrows updates state, we can't trust `arrows` to be instantly updated here if we just did it in move.
+            // But wait, move updates state. state is fresh on each render.
+            // handleWrapperPointerUp happens AFTER the last move.
+            // The `arrows` variable in closure might be stale? No, handleWrapperPointerUp is recreated on each render? 
+            // Yes, if it's not wrapped in useCallback with deps.
+            // It is NOT wrapped in useCallback in the code I see. 
+            // So `arrows` is fresh.
+
+            const arrow = arrows.find(a => a.id === draggedArrowHandle.id);
+            if (arrow) {
+                socket?.emit('arrow:update', arrow);
+            }
+
+            // If it was a group drag (body), we technically updated multiple items
+            // But for now let's just cover the single arrow case or simple group case.
+            // If dragging body of arrow that is part of a selection, we moved nodes too.
+            // We should emit node updates for all selected nodes!
+            if (draggedArrowHandle.type === 'body' && selectedNodeIds.has(draggedArrowHandle.id)) {
+                nodes.forEach(n => {
+                    if (selectedNodeIds.has(n.id)) {
+                        socket?.emit('node:update', n);
+                    }
+                });
+                // And all OTHER selected arrows
+                arrows.forEach(a => {
+                    if (selectedNodeIds.has(a.id) && a.id !== draggedArrowHandle.id) {
+                        socket?.emit('arrow:update', a);
+                    }
+                });
+            }
+
+
             // Always clear selection immediately after dropping an arrow
             // This covers the case where a group was dragged via an arrow
             setSelectedNodeIds(new Set());
@@ -287,7 +525,14 @@ export const Canvas: React.FC = () => {
     const handleNodeClick = (_id: string) => { /* ... keep existing logic if needed ... */ };
     const handleBgClick = () => { setConnectionStart(null); };
     const handleNodeContentChange = (id: string, content: string) => {
-        setNodes(prev => prev.map(n => n.id === id ? { ...n, content } : n));
+        setNodes(prev => {
+            const next = prev.map(n => n.id === id ? { ...n, content } : n);
+            const updated = next.find(n => n.id === id);
+            if (updated) {
+                socket?.emit('node:update', updated);
+            }
+            return next;
+        });
     };
 
     // --- RENDER HELPERS ---
@@ -295,7 +540,7 @@ export const Canvas: React.FC = () => {
     // We will render draggable handle Divs.
 
     // --- SAVE / LOAD ---
-    const fileInputRef = useRef<HTMLInputElement>(null);
+
 
     const handleSave = async () => {
         const data = {
@@ -409,9 +654,17 @@ export const Canvas: React.FC = () => {
                 onSave={handleSave}
                 onLoad={handleLoad}
                 showBorders={showBorders}
-                onToggleBorders={() => setShowBorders(!showBorders)}
+                onToggleBorders={() => {
+                    const newVal = !showBorders;
+                    setShowBorders(newVal);
+                    socket?.emit('toggle:borders', newVal);
+                }}
                 isLocked={isLocked}
-                onToggleLock={() => setIsLocked(!isLocked)}
+                onToggleLock={() => {
+                    const newVal = !isLocked;
+                    setIsLocked(newVal);
+                    socket?.emit('toggle:lock', newVal);
+                }}
             />
 
 
@@ -428,8 +681,24 @@ export const Canvas: React.FC = () => {
                     initialPositionX={-2000}
                     initialPositionY={-100}
                     doubleClick={{ disabled: true }}
-                    onTransformed={() => updateArrowsRef.current?.()}
-                    onPanning={() => updateArrowsRef.current?.()}
+                    onTransformed={(r) => {
+                        updateArrowsRef.current?.();
+                        if (!isRemoteUpdate.current) {
+                            const { positionX, positionY, scale } = r.instance.transformState;
+                            socket?.emit('viewport:update', { x: positionX, y: positionY, scale });
+                        }
+                    }}
+                    onPanning={(r) => {
+                        updateArrowsRef.current?.();
+                        // Optional: emit on panning for smoother live drag, but might be too much traffic
+                        // Let's rely on onTransformed which fires after pan? onPanning fires during.
+                        // For real-time, emit here.
+                        if (!isRemoteUpdate.current) {
+                            const { positionX, positionY, scale } = r.instance.transformState;
+                            // throttle this in real app!
+                            socket?.emit('viewport:update', { x: positionX, y: positionY, scale });
+                        }
+                    }}
                 >
                     <TransformComponent wrapperClass="w-full h-full" contentClass="w-full h-full">
                         <div
