@@ -243,21 +243,7 @@ export const Canvas: React.FC = () => {
         setShowClearConfirm(false);
     };
 
-    // Re-join room on reconnection (Fixes Render 15min timeout issue)
-    useEffect(() => {
-        if (!socket || !roomId) return;
 
-        const handleConnect = () => {
-            console.log('Socket connected/reconnected. Re-joining room:', roomId);
-            socket.emit('join_room', roomId);
-        };
-
-        socket.on('connect', handleConnect);
-
-        return () => {
-            socket.off('connect', handleConnect);
-        };
-    }, [socket, roomId]);
 
     // Helper to get/set local storage for the CURRENT room
     const getSavedData = () => {
@@ -288,6 +274,53 @@ export const Canvas: React.FC = () => {
         // But to avoid clobbering on initial load race conditions, verify initialization.
         saveData(nodes, arrows);
     }, [nodes, arrows, roomId]);
+
+    // Unified Room Connection Logic
+    useEffect(() => {
+        if (!socket || !roomId) return;
+
+        // 1. Setup Listener for Initial State
+        const handleInitState = (serverData: { nodes: NodeType[], arrows: ArrowType[] }) => {
+            if (serverData.nodes.length > 0 || serverData.arrows.length > 0) {
+                console.log('Received server state, updating local.');
+                isRemoteUpdate.current = true;
+                setNodes(serverData.nodes);
+                setArrows(serverData.arrows);
+            } else {
+                // Server is empty. Check local storage for backup (Hydration).
+                const localData = getSavedData();
+                if (localData && (localData.nodes.length > 0 || localData.arrows.length > 0)) {
+                    console.log('Server empty, hydrating from local storage backup.');
+                    socket.emit('hydrate_state', localData);
+                    // Optimistically update local too
+                    isRemoteUpdate.current = true;
+                    setNodes(localData.nodes);
+                    setArrows(localData.arrows);
+                }
+            }
+        };
+
+        socket.on('init_state', handleInitState);
+
+        // 2. Define Reconnection/Join Handler
+        const handleJoin = () => {
+            console.log('Joining room:', roomId);
+            socket.emit('join_room', roomId);
+        };
+
+        // 3. Join immediately if connected
+        if (socket.connected) {
+            handleJoin();
+        }
+
+        // 4. Handle future reconnections
+        socket.on('connect', handleJoin);
+
+        return () => {
+            socket.off('init_state', handleInitState);
+            socket.off('connect', handleJoin);
+        };
+    }, [socket, roomId]);
 
 
     useEffect(() => {
@@ -845,11 +878,7 @@ export const Canvas: React.FC = () => {
         }
     };
 
-    useEffect(() => {
-        if (socket && roomId) {
-            socket.emit('join_room', roomId);
-        }
-    }, [socket, roomId]);
+
 
     if (!roomId) {
         return (
