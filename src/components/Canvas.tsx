@@ -338,7 +338,14 @@ export const Canvas: React.FC = () => {
         // Connect to server (Ensure port matches server/index.js for local dev)
         // In production (Render), undefined url lets it auto-discover the host serving the page
         const socketUrl = import.meta.env.DEV ? 'http://localhost:3001' : undefined;
-        const newSocket = io(socketUrl);
+        const newSocket = io(socketUrl, {
+            transports: ['websocket'], // Force websocket to avoid sticky session issues on Render
+            reconnection: true,
+            reconnectionAttempts: Infinity,
+            reconnectionDelay: 1000,
+            reconnectionDelayMax: 5000,
+            timeout: 20000,
+        });
         setSocket(newSocket);
 
         newSocket.on('connect', () => {
