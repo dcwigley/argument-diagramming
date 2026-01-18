@@ -27,13 +27,35 @@ const getRoomState = (roomId) => {
 io.on('connection', (socket) => {
     console.log('Client connected:', socket.id);
 
-    socket.on('join_room', (roomId) => {
+    socket.on('join_room', async (roomId) => {
+        // Leave previous room if any (basic implementation, assuming 1 room at a time)
+        if (socket.data.roomId) {
+            socket.leave(socket.data.roomId);
+        }
+
         socket.join(roomId);
         socket.data.roomId = roomId;
-        console.log(`Client ${socket.id} joined room ${roomId}`);
+        console.log(`Socket ${socket.id} joined room ${roomId}`);
 
+        // Get Room State
         const roomState = getRoomState(roomId);
-        socket.emit('init_state', roomState);
+
+        // Send current state to newly connected client
+        socket.emit('init_state', { nodes: roomState.nodes, arrows: roomState.arrows });
+
+        // Get all OTHER users in this room
+        const sockets = await io.in(roomId).fetchSockets();
+        const usersInRoom = sockets.map(s => s.id).filter(id => id !== socket.id);
+
+        socket.emit('all users', usersInRoom);
+    });
+
+    socket.on('sending signal', payload => {
+        io.to(payload.userToSignal).emit('user joined audio', { signal: payload.signal, callerID: payload.callerID });
+    });
+
+    socket.on('returning signal', payload => {
+        io.to(payload.callerID).emit('receiving returned signal', { signal: payload.signal, id: socket.id });
     });
 
     // Client sends its local state to hydrate server (if server is empty)

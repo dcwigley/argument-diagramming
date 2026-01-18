@@ -5,6 +5,7 @@ import { Node } from './Node';
 import { Toolbar } from './Toolbar';
 import { v4 as uuidv4 } from 'uuid';
 import { io, Socket } from 'socket.io-client';
+import Peer from 'simple-peer';
 
 export type NodeType = {
     id: string;
@@ -76,10 +77,157 @@ export const Canvas: React.FC = () => {
         socket?.emit(event, data);
     };
 
+    // Voice Chat State
+    const [isMicEnabled, setIsMicEnabled] = useState(false);
+    const peersRef = useRef<{ peerID: string, peer: Peer.Instance }[]>([]);
+    const userStream = useRef<MediaStream | null>(null);
+
+    const toggleMic = () => {
+        if (isMicEnabled) {
+            // Mute / Stop
+            // Ideally we just mute tracks, or stop completely?
+            // Let's stop completely for privacy "off".
+            if (userStream.current) {
+                userStream.current.getTracks().forEach(track => track.stop());
+                userStream.current = null;
+            }
+            // Destroy all peers
+            peersRef.current.forEach(p => p.peer.destroy());
+            peersRef.current = [];
+            setIsMicEnabled(false);
+        } else {
+            // Start
+            navigator.mediaDevices.getUserMedia({ video: false, audio: true }).then(stream => {
+                userStream.current = stream;
+                setIsMicEnabled(true);
+
+                // We ask the server who is here?
+                // Actually, we can just ask again or rely on the join logic if we auto-joined.
+                // But since this is a toggle, we need to signal "I am ready to talk" to everyone.
+                // Re-using the "join_room" logic slightly or adding a specific "join_audio" event.
+                // Let's assume on toggle ON, we seek all users.
+                // Just emit a "join_room" again? No, that resets canvas.
+                // Let's rely on the "all users" event which we might have missed if we just toggled content.
+                // Actually, the server should send us the list when we want to join audio?
+                // Or we store the list of users in the room in a ref?
+                // Let's upgrade the socket logic to track "usersInRoom" locally.
+
+                // Simpler: Just emit 'join_audio_room' if we had it, or re-request user list.
+                // For this MVP, let's just trigger the connection process to users we know about. 
+                // We will add a socket.on('all users') handler below.
+                if (socket && roomId) {
+                    // Re-fetch users to start calls
+                    socket.emit('join_room', roomId);
+                }
+            }).catch(err => {
+                console.error("Failed to get microphone:", err);
+                alert("Could not access microphone.");
+            });
+        }
+    };
+
+
+    const createPeer = (userToSignal: string, callerID: string, stream: MediaStream) => {
+        const peer = new Peer({
+            initiator: true,
+            trickle: false,
+            stream,
+        });
+
+        peer.on('signal', signal => {
+            socket?.emit('sending signal', { userToSignal, callerID, signal });
+        });
+
+        peer.on('stream', stream => {
+            const audio = document.createElement('audio');
+            audio.srcObject = stream;
+            audio.play();
+        });
+
+        return peer;
+    };
+
+    const addPeer = (incomingSignal: any, callerID: string, stream: MediaStream) => {
+        const peer = new Peer({
+            initiator: false,
+            trickle: false,
+            stream,
+        });
+
+        peer.on('signal', signal => {
+            socket?.emit('returning signal', { signal, callerID });
+        });
+
+        peer.on('stream', stream => {
+            const audio = document.createElement('audio');
+            audio.srcObject = stream;
+            audio.play();
+        });
+
+        peer.signal(incomingSignal);
+
+        return peer;
+    };
+
+    // ... existing ...
+
     const handleClearRequest = () => {
         setShowClearConfirm(true);
     };
 
+    // ... handleClearConfirm ...
+
+    // ... handleClearCancel ...
+
+    // ... useEffect socket ...
+    useEffect(() => {
+        if (!socket) return;
+
+        socket.on('all users', (users: string[]) => {
+            console.log('Users in room:', users);
+            if (isMicEnabled && userStream.current && socket.id) {
+                // Initiate calls to all existing users
+                users.forEach(userID => {
+                    // Check if already connected?
+                    const peer = createPeer(userID, socket.id!, userStream.current!);
+                    peersRef.current.push({
+                        peerID: userID,
+                        peer,
+                    });
+                });
+            }
+        });
+
+        socket.on('user joined audio', payload => {
+            // payload: { signal, callerID }
+            console.log("User joined audio, receiving signal from:", payload.callerID);
+            if (userStream.current) {
+                const peer = addPeer(payload.signal, payload.callerID, userStream.current);
+                peersRef.current.push({
+                    peerID: payload.callerID,
+                    peer,
+                });
+            }
+        });
+
+        socket.on('receiving returned signal', payload => {
+            const item = peersRef.current.find(p => p.peerID === payload.id);
+            if (item) {
+                item.peer.signal(payload.signal);
+            }
+        });
+
+        return () => {
+            if (socket) {
+                socket.off('all users');
+                socket.off('user joined audio');
+                socket.off('receiving returned signal');
+            }
+        };
+
+    }, [socket, isMicEnabled]); // Dependency on socket and mic state
+
+    // ... handleClearConfirm (moved back to proper scope) ...
     const handleClearConfirm = () => {
         if (socket && roomId) {
             socket.emit('room:clear');
@@ -88,6 +236,8 @@ export const Canvas: React.FC = () => {
         }
         setShowClearConfirm(false);
     };
+
+
 
     const handleClearCancel = () => {
         setShowClearConfirm(false);
@@ -740,6 +890,8 @@ export const Canvas: React.FC = () => {
                     socket?.emit('toggle:lock', newVal);
                 }}
                 onClear={handleClearRequest}
+                isMicEnabled={isMicEnabled}
+                onToggleMic={toggleMic}
             />
 
             {/* Clear Confirmation Dialog */}
