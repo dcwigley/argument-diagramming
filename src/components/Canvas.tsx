@@ -243,6 +243,22 @@ export const Canvas: React.FC = () => {
         setShowClearConfirm(false);
     };
 
+    // Re-join room on reconnection (Fixes Render 15min timeout issue)
+    useEffect(() => {
+        if (!socket || !roomId) return;
+
+        const handleConnect = () => {
+            console.log('Socket connected/reconnected. Re-joining room:', roomId);
+            socket.emit('join_room', roomId);
+        };
+
+        socket.on('connect', handleConnect);
+
+        return () => {
+            socket.off('connect', handleConnect);
+        };
+    }, [socket, roomId]);
+
     useEffect(() => {
         // Connect to server (Ensure port matches server/index.js for local dev)
         // In production (Render), undefined url lets it auto-discover the host serving the page
