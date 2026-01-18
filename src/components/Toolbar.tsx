@@ -1,5 +1,5 @@
 import React from 'react';
-import { Plus, ArrowUpRight, Download, Upload, Square } from 'lucide-react';
+import { Plus, ArrowUpRight, Download, Upload, Square, X } from 'lucide-react';
 
 interface ToolbarProps {
     onAddNode: () => void;
@@ -10,9 +10,10 @@ interface ToolbarProps {
     onToggleBorders: () => void;
     isLocked: boolean;
     onToggleLock: () => void;
+    onClear?: () => void;
 }
 
-export const Toolbar: React.FC<ToolbarProps> = ({ onAddNode, onAddArrow, onSave, onLoad, showBorders, onToggleBorders, isLocked, onToggleLock }) => {
+export const Toolbar: React.FC<ToolbarProps> = ({ onAddNode, onAddArrow, onSave, onLoad, showBorders, onToggleBorders, isLocked, onToggleLock, onClear }) => {
     return (
         <div className="fixed top-6 left-1/2 -translate-x-1/2 h-14 bg-secondary/80 backdrop-blur-md border border-white/10 rounded-full shadow-2xl flex items-center px-4 gap-2 z-50">
 
@@ -67,6 +68,16 @@ export const Toolbar: React.FC<ToolbarProps> = ({ onAddNode, onAddArrow, onSave,
                 title="Load Diagram"
             >
                 <Upload size={20} />
+            </button>
+
+            <div className="w-px h-6 bg-white/10 mx-1" />
+
+            <button
+                onClick={() => onClear && onClear()}
+                className="p-2 rounded-full text-slate-400 hover:text-white hover:bg-white/10 transition-colors"
+                title="Clear Grid"
+            >
+                <X size={20} />
             </button>
 
         </div>

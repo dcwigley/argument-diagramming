@@ -40,36 +40,23 @@ export const Canvas: React.FC = () => {
     const transformComponentRef = useRef<ReactZoomPanPinchRef>(null);
     const fileInputRef = useRef<HTMLInputElement>(null);
     const selectionStartRef = useRef<{ x: number, y: number } | null>(null);
-
-    // Initial load helper
-    const getSavedData = () => {
-        try {
-            const saved = localStorage.getItem('diagram_data');
-            if (saved) {
-                return JSON.parse(saved);
-            }
-        } catch (e) {
-            console.error("Failed to load data", e);
-        }
-        return null;
-    };
+    const isRemoteUpdate = useRef(false);
 
     const [nodes, setNodes] = useState<NodeType[]>(() => {
-        const data = getSavedData();
-        return data?.nodes || [];
+        // const data = getSavedData();
+        // return data?.nodes || [];
+        return [];
     });
+
     const [arrows, setArrows] = useState<ArrowType[]>(() => {
-        const data = getSavedData();
-        return data?.arrows || [];
+        // const data = getSavedData();
+        // return data?.arrows || [];
+        return [];
     });
 
     const [socket, setSocket] = useState<Socket | null>(null);
-    const isRemoteUpdate = useRef(false);
-
-    // Emitter for live drag (Throttling removed for group sync correctness)
-    const emitUpdate = (event: string, data: any) => {
-        socket?.emit(event, data);
-    };
+    const [roomId, setRoomId] = useState<string | null>(null);
+    const [showClearConfirm, setShowClearConfirm] = useState(false);
 
     // Legacy connection state (can clean up later if unused)
     const [connections] = useState<ConnectionType[]>([]);
@@ -83,6 +70,28 @@ export const Canvas: React.FC = () => {
     const [contextMenu, setContextMenu] = useState<{ x: number, y: number, type: 'ARROW' | 'NODE', id: string } | null>(null);
     const [showBorders, setShowBorders] = useState(true);
     const [isLocked, setIsLocked] = useState(false);
+
+    // Emitter for live drag (Throttling removed for group sync correctness)
+    const emitUpdate = (event: string, data: any) => {
+        socket?.emit(event, data);
+    };
+
+    const handleClearRequest = () => {
+        setShowClearConfirm(true);
+    };
+
+    const handleClearConfirm = () => {
+        if (socket && roomId) {
+            socket.emit('room:clear');
+            setNodes([]);
+            setArrows([]);
+        }
+        setShowClearConfirm(false);
+    };
+
+    const handleClearCancel = () => {
+        setShowClearConfirm(false);
+    };
 
     useEffect(() => {
         // Connect to server (Ensure port matches server/index.js)
@@ -102,11 +111,11 @@ export const Canvas: React.FC = () => {
                 setArrows(serverData.arrows);
             } else {
                 // Server is empty. check local storage.
-                const localData = getSavedData();
-                if (localData && (localData.nodes.length > 0 || localData.arrows.length > 0)) {
-                    console.log('Server empty, treating local data as authority -> hydration.');
-                    newSocket.emit('hydrate_state', localData);
-                }
+                // const localData = getSavedData();
+                // if (localData && (localData.nodes.length > 0 || localData.arrows.length > 0)) {
+                //     console.log('Server empty, treating local data as authority -> hydration.');
+                //     newSocket.emit('hydrate_state', localData);
+                // }
             }
         });
 
@@ -581,6 +590,11 @@ export const Canvas: React.FC = () => {
         }
     };
 
+    const handleSaveAndClear = async () => {
+        await handleSave();
+        setShowClearConfirm(false);
+    };
+
     const handleLoad = async () => {
         try {
             // @ts-ignore - File System Access API
@@ -634,6 +648,66 @@ export const Canvas: React.FC = () => {
         e.target.value = '';
     };
 
+    // Room State
+    const roomIdInputRef = useRef<HTMLInputElement>(null);
+
+    const handleJoinRoom = () => {
+        console.log("Room Dialog Rendered - checking updates");
+        if (roomIdInputRef.current) {
+            const id = roomIdInputRef.current.value;
+            if (id.trim()) {
+                setRoomId(id.trim());
+            }
+        }
+    };
+
+    useEffect(() => {
+        if (socket && roomId) {
+            socket.emit('join_room', roomId);
+        }
+    }, [socket, roomId]);
+
+    if (!roomId) {
+        return (
+            <div className="flex items-center justify-center w-screen h-screen bg-slate-900" style={{ color: '#60a5fa' }}>
+                <div className="p-8 bg-slate-800 rounded-lg shadow-xl border w-fit mx-auto" style={{ borderColor: '#60a5fa', borderWidth: '1px' }}>
+                    <h2 className="text-2xl font-bold mb-6 text-center whitespace-nowrap" style={{ color: '#60a5fa' }}>Enter Room ID</h2>
+                    <div className="mb-6 flex flex-col items-center">
+                        <label className="block text-sm font-medium mb-2" style={{ color: '#60a5fa' }}>Room Number</label>
+                        <input
+                            ref={roomIdInputRef}
+                            type="text"
+                            className="w-60 px-4 py-3 bg-slate-900 rounded-md focus:outline-none transition-colors box-border text-center placeholder:text-blue-400/50"
+                            style={{
+                                color: '#60a5fa',
+                                borderColor: '#60a5fa',
+                                borderWidth: '1px'
+                            }}
+                            placeholder="e.g. 101"
+                            onKeyDown={(e) => e.key === 'Enter' && handleJoinRoom()}
+                            autoFocus
+                        />
+                    </div>
+                    <button
+                        onClick={handleJoinRoom}
+                        className="w-full font-bold py-3 px-4 rounded-md transition-colors box-border"
+                        style={{
+                            backgroundColor: '#60a5fa',
+                            color: '#0f172a' // Dark slate for contrast
+                        }}
+                        onMouseOver={(e) => e.currentTarget.style.backgroundColor = '#93c5fd'} // lighten on hover
+                        onMouseOut={(e) => e.currentTarget.style.backgroundColor = '#60a5fa'}
+                    >
+                        Join Room
+                    </button>
+                    <p className="mt-4 text-xs text-center" style={{ color: '#60a5fa' }}>
+                        Share this number with others to collaborate.
+                    </p>
+                </div>
+            </div>
+        );
+    }
+
     return (
         <div
             className="w-screen h-screen relative bg-background overflow-hidden select-none"
@@ -665,7 +739,44 @@ export const Canvas: React.FC = () => {
                     setIsLocked(newVal);
                     socket?.emit('toggle:lock', newVal);
                 }}
+                onClear={handleClearRequest}
             />
+
+            {/* Clear Confirmation Dialog */}
+            {showClearConfirm && (
+                <div className="absolute inset-0 z-[100] flex items-center justify-center bg-black/50 backdrop-blur-sm">
+                    <div className="bg-slate-800 p-8 rounded-lg shadow-2xl border border-slate-700 max-w-md w-full mx-4 text-center">
+                        <h3 className="text-xl font-bold text-white mb-4">Clear Grid?</h3>
+                        <p className="text-slate-300 mb-8">
+                            Do you really want to delete everything?
+                        </p>
+                        <div className="flex gap-4 justify-center">
+                            <button
+                                onClick={handleClearConfirm}
+                                className="px-6 py-2 bg-red-500 hover:bg-red-600 text-white rounded font-medium transition-colors"
+                            >
+                                Delete
+                            </button>
+                            <button
+                                onClick={handleSaveAndClear}
+                                className="px-6 py-2 bg-blue-500 hover:bg-blue-600 text-white rounded font-medium transition-colors"
+                            >
+                                Save Instead
+                            </button>
+                            {/* Optional Cancel - user can just click save instead if they want to 'cancel' clearing without deleting, or we can add explicit cancel? 
+                                    User prompt said: "If the user selects save, then the save function... gets activated... but diagram does not get deleted." 
+                                    So 'Save Instead' covers the non-destructive path. Use 'Cancel' for truly aborting?
+                                    I'll add a small simple Cancel text link or X for UX safety. */}
+                            <button
+                                onClick={handleClearCancel}
+                                className="px-4 py-2 text-slate-400 hover:text-white transition-colors"
+                            >
+                                Cancel
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
 
 
 
