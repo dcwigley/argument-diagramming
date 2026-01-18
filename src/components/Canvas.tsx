@@ -244,8 +244,10 @@ export const Canvas: React.FC = () => {
     };
 
     useEffect(() => {
-        // Connect to server (Ensure port matches server/index.js)
-        const newSocket = io('http://localhost:3001');
+        // Connect to server (Ensure port matches server/index.js for local dev)
+        // In production (Render), undefined url lets it auto-discover the host serving the page
+        const socketUrl = import.meta.env.DEV ? 'http://localhost:3001' : undefined;
+        const newSocket = io(socketUrl);
         setSocket(newSocket);
 
         newSocket.on('connect', () => {

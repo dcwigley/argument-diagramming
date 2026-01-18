@@ -2,17 +2,30 @@ const express = require('express');
 const http = require('http');
 const { Server } = require('socket.io');
 const cors = require('cors');
+const path = require('path');
 
 const app = express();
 app.use(cors());
 
+// Serve static files from the dist directory (Vite build output)
+app.use(express.static(path.join(__dirname, '../dist')));
+
 const server = http.createServer(app);
 const io = new Server(server, {
     cors: {
-        origin: "*", // In production, replace with specific domain
+        origin: "*", // In production, replace with specific domain if needed
         methods: ["GET", "POST"]
     }
 });
+
+// ... (rest of socket logic)
+
+// Handle SPA routing: serve index.html for any unknown route
+app.get('*', (req, res) => {
+    res.sendFile(path.join(__dirname, '../dist/index.html'));
+});
+
+
 
 // In-memory state: Map<roomId, { nodes: [], arrows: [] }>
 const rooms = new Map();
@@ -158,7 +171,12 @@ io.on('connection', (socket) => {
     });
 });
 
-const PORT = 3001;
+const PORT = process.env.PORT || 3001;
+server.listen(PORT, () => {
+    console.log(`Server running on port ${PORT}`);
+});
+
+const PORT = process.env.PORT || 3001;
 server.listen(PORT, () => {
     console.log(`Server running on port ${PORT}`);
 });
