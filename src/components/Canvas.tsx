@@ -259,6 +259,37 @@ export const Canvas: React.FC = () => {
         };
     }, [socket, roomId]);
 
+    // Helper to get/set local storage for the CURRENT room
+    const getSavedData = () => {
+        if (!roomId) return null;
+        try {
+            const raw = localStorage.getItem(`room_${roomId}`);
+            return raw ? JSON.parse(raw) : null;
+        } catch (e) {
+            console.error("Failed to load local data", e);
+            return null;
+        }
+    };
+
+    const saveData = (n: NodeType[], a: ArrowType[]) => {
+        if (!roomId) return;
+        try {
+            localStorage.setItem(`room_${roomId}`, JSON.stringify({ nodes: n, arrows: a }));
+        } catch (e) {
+            console.error("Failed to save local data", e);
+        }
+    };
+
+    // Auto-save useEffect
+    useEffect(() => {
+        if (!roomId || nodes.length === 0 && arrows.length === 0) return;
+        // Don't save empty state over existing state if we just loaded?
+        // Actually, if user deletes everything, we SHOULD save empty.
+        // But to avoid clobbering on initial load race conditions, verify initialization.
+        saveData(nodes, arrows);
+    }, [nodes, arrows, roomId]);
+
+
     useEffect(() => {
         // Connect to server (Ensure port matches server/index.js for local dev)
         // In production (Render), undefined url lets it auto-discover the host serving the page
@@ -270,22 +301,7 @@ export const Canvas: React.FC = () => {
             console.log('Connected to server');
         });
 
-        // Smart Hydration (Initial Load)
-        newSocket.on('init_state', (serverData) => {
-            if (serverData.nodes.length > 0 || serverData.arrows.length > 0) {
-                console.log('Received server state, updating local.');
-                isRemoteUpdate.current = true;
-                setNodes(serverData.nodes);
-                setArrows(serverData.arrows);
-            } else {
-                // Server is empty. check local storage.
-                // const localData = getSavedData();
-                // if (localData && (localData.nodes.length > 0 || localData.arrows.length > 0)) {
-                //     console.log('Server empty, treating local data as authority -> hydration.');
-                //     newSocket.emit('hydrate_state', localData);
-                // }
-            }
-        });
+
 
         // --- Granular Listeners ---
         newSocket.on('node:add', (node) => {
