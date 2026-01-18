@@ -316,9 +316,20 @@ export const Canvas: React.FC = () => {
         // 4. Handle future reconnections
         socket.on('connect', handleJoin);
 
+        // 5. Handle Full State Updates (e.g. from Hydration)
+        const handleUpdateState = (newState: { nodes: NodeType[], arrows: ArrowType[] }) => {
+            console.log('Received full state update.');
+            isRemoteUpdate.current = true;
+            setNodes(newState.nodes);
+            setArrows(newState.arrows);
+        };
+
+        socket.on('update_state', handleUpdateState);
+
         return () => {
             socket.off('init_state', handleInitState);
             socket.off('connect', handleJoin);
+            socket.off('update_state', handleUpdateState);
         };
     }, [socket, roomId]);
 
