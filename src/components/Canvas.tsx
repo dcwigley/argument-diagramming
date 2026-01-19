@@ -362,6 +362,12 @@ export const Canvas: React.FC = () => {
 
         newSocket.on('connect', () => {
             console.log('Connected to server');
+            // Cleanup any existing peers from previous session/disconnect to prevent echoes
+            if (peersRef.current.length > 0) {
+                console.log("New connection established. Cleaning up old audio peers.");
+                peersRef.current.forEach(p => p.peer.destroy());
+                peersRef.current = [];
+            }
         });
 
 
