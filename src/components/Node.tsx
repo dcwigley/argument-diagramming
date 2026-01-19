@@ -6,6 +6,8 @@ interface NodeProps {
     id: string;
     initialX: number;
     initialY: number;
+    initialWidth?: number;
+    initialHeight?: number;
     content: string;
     onDragStart: () => void;
     onDragStop: (x: number, y: number) => void;
@@ -13,6 +15,7 @@ interface NodeProps {
     mode: 'PAN' | 'SELECT' | 'CONNECT';
     onClick: () => void;
     onChange: (content: string) => void;
+    onResizeStop?: (width: number, height: number) => void;
     isSelected?: boolean;
     onContextMenu?: (e: React.MouseEvent) => void;
     showBorders: boolean;
@@ -20,10 +23,10 @@ interface NodeProps {
 }
 
 export const Node: React.FC<NodeProps> = ({
-    initialX, initialY, content, onDragStart, onDragStop, onDrag, mode, onClick, onChange, isSelected, onContextMenu, showBorders, isLocked
+    initialX, initialY, initialWidth, initialHeight, content, onDragStart, onDragStop, onDrag, mode, onClick, onChange, onResizeStop, isSelected, onContextMenu, showBorders, isLocked
 }) => {
     const [pos, setPos] = useState({ x: initialX, y: initialY });
-    const [size, setSize] = useState({ width: 200, height: 100 });
+    const [size, setSize] = useState({ width: initialWidth || 200, height: initialHeight || 100 });
     const [isDragging, setIsDragging] = useState(false);
     const textareaRef = useRef<HTMLTextAreaElement>(null);
     const dragStartPos = useRef<{ x: number, y: number } | null>(null);
@@ -35,6 +38,12 @@ export const Node: React.FC<NodeProps> = ({
     useEffect(() => {
         setPos({ x: initialX, y: initialY });
     }, [initialX, initialY]);
+
+    useEffect(() => {
+        if (initialWidth && initialHeight) {
+            setSize({ width: initialWidth, height: initialHeight });
+        }
+    }, [initialWidth, initialHeight]);
 
     const handlePointerDown = (e: React.PointerEvent) => {
         // Allow text selection and context menu inside textarea
@@ -132,10 +141,15 @@ export const Node: React.FC<NodeProps> = ({
                     e.stopPropagation();
                 }}
                 onResizeStop={(_e, _direction, _ref, d) => {
-                    setSize(curr => ({
-                        width: curr.width + d.width,
-                        height: curr.height + d.height,
-                    }));
+                    const newWidth = size.width + d.width;
+                    const newHeight = size.height + d.height;
+                    setSize({
+                        width: newWidth,
+                        height: newHeight,
+                    });
+                    if (onResizeStop) {
+                        onResizeStop(newWidth, newHeight);
+                    }
                 }}
                 minWidth={20}
                 minHeight={20}

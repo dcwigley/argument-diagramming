@@ -32,7 +32,7 @@ const rooms = new Map();
 
 const getRoomState = (roomId) => {
     if (!rooms.has(roomId)) {
-        rooms.set(roomId, { nodes: [], arrows: [] });
+        rooms.set(roomId, { nodes: [], arrows: [], showBorders: true });
     }
     return rooms.get(roomId);
 };
@@ -54,7 +54,7 @@ io.on('connection', (socket) => {
         const roomState = getRoomState(roomId);
 
         // Send current state to newly connected client
-        socket.emit('init_state', { nodes: roomState.nodes, arrows: roomState.arrows });
+        socket.emit('init_state', { nodes: roomState.nodes, arrows: roomState.arrows, showBorders: roomState.showBorders });
 
         // Get all OTHER users in this room
         const sockets = await io.in(roomId).fetchSockets();
@@ -83,6 +83,7 @@ io.on('connection', (socket) => {
             console.log(`Hydrating room ${roomId} state from client:`, socket.id);
             if (data.nodes) roomState.nodes = data.nodes;
             if (data.arrows) roomState.arrows = data.arrows;
+            if (data.showBorders !== undefined) roomState.showBorders = data.showBorders;
             // Broadcast the new hydrated state to everyone in the room
             io.to(roomId).emit('update_state', roomState);
         }
@@ -150,6 +151,8 @@ io.on('connection', (socket) => {
     socket.on('toggle:borders', (showBorders) => {
         const roomId = socket.data.roomId;
         if (!roomId) return;
+        const roomState = getRoomState(roomId);
+        roomState.showBorders = showBorders; // Persist state
         socket.to(roomId).emit('toggle:borders', showBorders);
     });
 

@@ -260,7 +260,7 @@ export const Canvas: React.FC = () => {
     const saveData = (n: NodeType[], a: ArrowType[]) => {
         if (!roomId) return;
         try {
-            localStorage.setItem(`room_${roomId}`, JSON.stringify({ nodes: n, arrows: a }));
+            localStorage.setItem(`room_${roomId}`, JSON.stringify({ nodes: n, arrows: a, showBorders }));
         } catch (e) {
             console.error("Failed to save local data", e);
         }
@@ -273,19 +273,19 @@ export const Canvas: React.FC = () => {
         // Actually, if user deletes everything, we SHOULD save empty.
         // But to avoid clobbering on initial load race conditions, verify initialization.
         saveData(nodes, arrows);
-    }, [nodes, arrows, roomId]);
+    }, [nodes, arrows, showBorders, roomId]);
 
     // Unified Room Connection Logic
     useEffect(() => {
         if (!socket || !roomId) return;
 
-        // 1. Setup Listener for Initial State
-        const handleInitState = (serverData: { nodes: NodeType[], arrows: ArrowType[] }) => {
+        const handleInitState = (serverData: { nodes: NodeType[], arrows: ArrowType[], showBorders?: boolean }) => {
             if (serverData.nodes.length > 0 || serverData.arrows.length > 0) {
                 console.log('Received server state, updating local.');
                 isRemoteUpdate.current = true;
                 setNodes(serverData.nodes);
                 setArrows(serverData.arrows);
+                if (serverData.showBorders !== undefined) setShowBorders(serverData.showBorders);
             } else {
                 // Server is empty. Check local storage for backup (Hydration).
                 const localData = getSavedData();
@@ -296,6 +296,7 @@ export const Canvas: React.FC = () => {
                     isRemoteUpdate.current = true;
                     setNodes(localData.nodes);
                     setArrows(localData.arrows);
+                    if (localData.showBorders !== undefined) setShowBorders(localData.showBorders);
                 }
             }
         };
@@ -322,6 +323,8 @@ export const Canvas: React.FC = () => {
             isRemoteUpdate.current = true;
             setNodes(newState.nodes);
             setArrows(newState.arrows);
+            // @ts-ignore
+            if (newState.showBorders !== undefined) setShowBorders(newState.showBorders);
         };
 
         socket.on('update_state', handleUpdateState);
@@ -779,6 +782,17 @@ export const Canvas: React.FC = () => {
         });
     };
 
+    const handleNodeResize = (id: string, width: number, height: number) => {
+        setNodes(prev => {
+            const next = prev.map(n => n.id === id ? { ...n, width, height } : n);
+            const updated = next.find(n => n.id === id);
+            if (updated) {
+                socket?.emit('node:update', updated);
+            }
+            return next;
+        });
+    };
+
     // --- RENDER HELPERS ---
     // We need real DOM elements for Xarrow to attach to.
     // We will render draggable handle Divs.
@@ -790,6 +804,7 @@ export const Canvas: React.FC = () => {
         const data = {
             nodes,
             arrows,
+            showBorders,
             version: 1
         };
         const jsonString = JSON.stringify(data, null, 2);
@@ -908,23 +923,33 @@ export const Canvas: React.FC = () => {
                         <input
                             ref={roomIdInputRef}
                             type="text"
-                            className="w-60 px-4 py-3 bg-slate-900 rounded-md focus:outline-none transition-colors box-border text-center placeholder:text-blue-400/50"
+                            className="w-40 px-4 py-3 bg-slate-900 rounded-md focus:outline-none transition-colors box-border text-center placeholder:text-blue-400/50 text-2xl"
                             style={{
                                 color: '#60a5fa',
                                 borderColor: '#60a5fa',
-                                borderWidth: '1px'
+                                borderWidth: '1px',
+                                boxShadow: 'inset 3px 3px 6px rgba(0,0,0,0.5), inset -1px -1px 2px rgba(255,255,255,0.1)',
+                                fontSize: '1.5rem'
                             }}
                             placeholder="e.g. 101"
+                            inputMode="numeric"
+                            onInput={(e) => { e.currentTarget.value = e.currentTarget.value.replace(/[^0-9]/g, ''); }}
                             onKeyDown={(e) => e.key === 'Enter' && handleJoinRoom()}
                             autoFocus
                         />
                     </div>
                     <button
                         onClick={handleJoinRoom}
-                        className="w-full font-bold py-3 px-4 rounded-md transition-colors box-border"
+                        className="w-40 mx-auto block font-bold rounded-md transition-colors box-border flex items-center justify-center active:translate-y-0.5 active:border-b-2 active:border-r-2"
                         style={{
                             backgroundColor: '#60a5fa',
-                            color: '#0f172a' // Dark slate for contrast
+                            color: '#0f172a', // Dark slate for contrast
+                            height: '60px',
+                            borderTop: '4px solid #93c5fd',
+                            borderLeft: '4px solid #93c5fd',
+                            borderBottom: '4px solid #1e40af',
+                            borderRight: '4px solid #1e40af',
+                            marginTop: '5px'
                         }}
                         onMouseOver={(e) => e.currentTarget.style.backgroundColor = '#93c5fd'} // lighten on hover
                         onMouseOut={(e) => e.currentTarget.style.backgroundColor = '#60a5fa'}
@@ -1093,6 +1118,9 @@ export const Canvas: React.FC = () => {
                                     onContextMenu={(e) => handleNodeContextMenu(e, node.id)}
                                     showBorders={showBorders}
                                     isLocked={isLocked}
+                                    initialWidth={node.width}
+                                    initialHeight={node.height}
+                                    onResizeStop={(w, h) => handleNodeResize(node.id, w, h)}
                                 />
                             ))}
 
