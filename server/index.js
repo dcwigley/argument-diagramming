@@ -89,6 +89,25 @@ io.on('connection', (socket) => {
         }
     });
 
+    // Explicitly load/overwrite room state (e.g. from file upload)
+    socket.on('room:load', (data) => {
+        const roomId = socket.data.roomId;
+        if (!roomId) return;
+
+        console.log(`Loading new state for room ${roomId} from client:`, socket.id);
+        const roomState = getRoomState(roomId);
+
+        // Reset and replace
+        roomState.nodes = data.nodes || [];
+        roomState.arrows = data.arrows || [];
+        if (data.showBorders !== undefined) roomState.showBorders = data.showBorders;
+        else roomState.showBorders = true; // Default if missing in file? Or keep current? File usually source of truth.
+
+        // Broadcast the new state to everyone in the room (including sender, to confirm?)
+        // Usually sender updates locally optimistically, but let's broadcast to all to be safe and consistent.
+        io.to(roomId).emit('update_state', roomState);
+    });
+
     // Handle Granular Updates
     socket.on('node:add', (node) => {
         const roomId = socket.data.roomId;

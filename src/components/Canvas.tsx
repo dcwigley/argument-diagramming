@@ -250,7 +250,7 @@ export const Canvas: React.FC = () => {
     const getSavedData = () => {
         if (!roomId) return null;
         try {
-            const raw = localStorage.getItem(`room_${roomId}`);
+            const raw = sessionStorage.getItem(`room_${roomId}`);
             return raw ? JSON.parse(raw) : null;
         } catch (e) {
             console.error("Failed to load local data", e);
@@ -261,12 +261,13 @@ export const Canvas: React.FC = () => {
     const saveData = (n: NodeType[], a: ArrowType[]) => {
         if (!roomId) return;
         try {
-            localStorage.setItem(`room_${roomId}`, JSON.stringify({ nodes: n, arrows: a, showBorders }));
+            sessionStorage.setItem(`room_${roomId}`, JSON.stringify({ nodes: n, arrows: a, showBorders }));
         } catch (e) {
             console.error("Failed to save local data", e);
         }
     };
 
+    // Auto-save useEffect
     // Auto-save useEffect
     useEffect(() => {
         if (!roomId) return;
@@ -871,6 +872,13 @@ export const Canvas: React.FC = () => {
                 if (data.nodes && data.arrows) {
                     setNodes(data.nodes);
                     setArrows(data.arrows);
+                    if (data.showBorders !== undefined) setShowBorders(data.showBorders);
+
+                    socket?.emit('room:load', {
+                        nodes: data.nodes,
+                        arrows: data.arrows,
+                        showBorders: data.showBorders
+                    });
                 }
             } else {
                 fileInputRef.current?.click();
@@ -895,6 +903,13 @@ export const Canvas: React.FC = () => {
                 if (data.nodes && data.arrows) {
                     setNodes(data.nodes);
                     setArrows(data.arrows);
+                    if (data.showBorders !== undefined) setShowBorders(data.showBorders);
+
+                    socket?.emit('room:load', {
+                        nodes: data.nodes,
+                        arrows: data.arrows,
+                        showBorders: data.showBorders
+                    });
                 }
             } catch (err) {
                 console.error("Failed to parse diagram file", err);
