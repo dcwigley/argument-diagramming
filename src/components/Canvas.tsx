@@ -42,6 +42,7 @@ export const Canvas: React.FC = () => {
     const fileInputRef = useRef<HTMLInputElement>(null);
     const selectionStartRef = useRef<{ x: number, y: number } | null>(null);
     const isRemoteUpdate = useRef(false);
+    const isReadyToSave = useRef(false);
 
     const [nodes, setNodes] = useState<NodeType[]>(() => {
         // const data = getSavedData();
@@ -268,16 +269,21 @@ export const Canvas: React.FC = () => {
 
     // Auto-save useEffect
     useEffect(() => {
-        if (!roomId || nodes.length === 0 && arrows.length === 0) return;
-        // Don't save empty state over existing state if we just loaded?
-        // Actually, if user deletes everything, we SHOULD save empty.
-        // But to avoid clobbering on initial load race conditions, verify initialization.
+        if (!roomId) return;
+
+        // Prevent saving until we have successfully initialized (hydrated) from server or local storage
+        // This avoids overwriting existing local storage with an empty array on simplified initial load
+        if (!isReadyToSave.current) return;
+
         saveData(nodes, arrows);
     }, [nodes, arrows, showBorders, roomId]);
 
     // Unified Room Connection Logic
     useEffect(() => {
         if (!socket || !roomId) return;
+
+        // Reset ready state on room join so we don't save premature empty state
+        isReadyToSave.current = false;
 
         const handleInitState = (serverData: { nodes: NodeType[], arrows: ArrowType[], showBorders?: boolean }) => {
             if (serverData.nodes.length > 0 || serverData.arrows.length > 0) {
@@ -299,6 +305,8 @@ export const Canvas: React.FC = () => {
                     if (localData.showBorders !== undefined) setShowBorders(localData.showBorders);
                 }
             }
+            // Mark as ready to save (hydration complete)
+            isReadyToSave.current = true;
         };
 
         socket.on('init_state', handleInitState);
